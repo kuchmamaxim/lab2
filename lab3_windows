@@ -1,0 +1,117 @@
+/////////////////////////////////////////////////////////////////////////////
+////////////////////////////Server///////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+#include <iostream>
+#include <string>
+#include <functional>
+#include <Windows.h>
+typedef PROCESS_INFORMATION ProcessInfo;
+
+
+
+std::string getString(size_t maxSize)  { 
+  std::string string;
+  while (true) {
+    int c = getchar();
+    if (c <= 0 || c == '\n' || string.size() > maxSize - 1)
+      break;
+    if (c <= 255)
+      string += static_cast<char>(c);
+  }
+  return string;
+} 
+
+ProcessInfo* createClient() { 
+  STARTUPINFO startUpInfo;
+  ZeroMemory(&startUpInfo, sizeof(startUpInfo));
+  auto *processInfo = new ProcessInfo;
+  startUpInfo.cb = sizeof(startUpInfo);
+  TCHAR name[11];
+  wcscpy_s(name, 11, L"Client.exe");
+  CreateProcessW(nullptr, name, nullptr, nullptr, false,
+                 CREATE_NEW_CONSOLE, nullptr, nullptr, &startUpInfo,
+                 processInfo);
+  return processInfo;
+}
+
+HANDLE createDuplexPipe() { 
+  return CreateNamedPipeA("\\\\.\\pipe\\server2clientpipe",
+    PIPE_ACCESS_DUPLEX,
+    PIPE_TYPE_MESSAGE, 
+    2, 255, 255, 0, nullptr);
+}
+
+HANDLE pipe;
+ProcessInfo* clientHandle;
+HANDLE toWrite;
+
+
+int main(const int argc, const char* argv[]) {
+
+  pipe = createDuplexPipe();
+  clientHandle = createClient();
+  toWrite = CreateSemaphoreA(nullptr, 0, 1, "toWrite");
+  CreateSemaphoreA(nullptr, 0, 1, "writeComplete");
+
+  fprintf(stderr, "Server ready!\n");
+  fprintf(stderr, "Enter message to send to client\n");
+
+    DWORD writed = 0;
+
+    while (true) {
+      fprintf(stderr, "> ");
+      auto string = getString(255);
+      WriteFile(pipe, string.c_str(), string.size(), &writed, nullptr);
+      ReleaseSemaphore(toWrite, 1, nullptr);
+      fprintf(stderr, "Writed %d/%d bytes. Waiting client...\n", writed, string.size());
+    }
+ 
+  return 0;
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////////////
+/////////////////////////////client///////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////
+
+#include <iostream>
+#include <string>
+
+#include <Windows.h>
+
+int main(const int argc, const char *argv[]) {
+
+  HANDLE pipeFile =
+      CreateFileA("\\\\.\\pipe\\server2clientpipe",
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, 
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE toWrite = OpenSemaphoreA(SYNCHRONIZE, false, "toWrite");
+  HANDLE writeComplete =OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, false, "writeComplete");
+  
+
+  fprintf(stderr, "Client ready!\n");
+  fprintf(stderr, "Waiting messages from server\n");
+
+  char *buffer = new char[255];
+  buffer[254] = 0;
+  DWORD readed = 0;
+  DWORD i = 0;
+
+  while (true) {
+    if (WaitForSingleObject(toWrite, 500) != WAIT_TIMEOUT) {
+	  fprintf(stderr, "\r");
+      ReadFile(pipeFile, buffer, 255, &readed, nullptr);
+      fprintf(stderr, "%d < ", readed);
+      buffer[readed] = 0;
+      fprintf(stderr, "%s\n", buffer);
+      ReleaseSemaphore(writeComplete, 1, nullptr);
+    } 
+	else { if (i++ >= 5) { fprintf(stderr, "\r");for (; i != 0; i--) fprintf(stderr, " ");fprintf(stderr, "\r");}fprintf(stderr, ".");}}
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  return 0;
+}
